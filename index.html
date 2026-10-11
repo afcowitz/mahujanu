@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0b3d4a">
+<title>Mahujanu</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b3d4a'/%3E%3Ccircle cx='32' cy='36' r='14' fill='%23f2d8a7'/%3E%3Cpath d='M32 8v18' stroke='%23f2d8a7' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --deep: #0b3d4a;
+  --lagoon: #137c8b;
+  --sand: #f2d8a7;
+  --foam: #eef7f6;
+  --ink: #0a2a33;
+  --error: #ffb4a8;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--deep); color: var(--foam); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body { overflow: hidden; }
+#gate {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(1200px 600px at 50% 110%, rgba(19,124,139,.55), transparent 70%),
+    linear-gradient(180deg, #08303b 0%, var(--deep) 60%, #0e4f5c 100%);
+}
+.card {
+  width: 100%; max-width: 380px; padding: 32px 28px 28px; border-radius: 20px;
+  background: rgba(238,247,246,.07); border: 1px solid rgba(238,247,246,.16);
+  box-shadow: 0 20px 60px rgba(0,0,0,.35);
+}
+h1 { margin: 0 0 4px; font-size: 2rem; letter-spacing: .02em; font-weight: 650; color: var(--sand); }
+.sub { margin: 0 0 24px; opacity: .75; font-size: .95rem; }
+label { display: block; font-size: .85rem; margin-bottom: 6px; opacity: .85; }
+.field { position: relative; }
+input[type=password], input[type=text] {
+  width: 100%; padding: 13px 76px 13px 14px; font-size: 1rem; border-radius: 12px;
+  border: 1px solid rgba(238,247,246,.3); background: rgba(5,25,31,.55); color: var(--foam);
+}
+input:focus { outline: 2px solid var(--sand); outline-offset: 1px; }
+#toggle {
+  position: absolute; right: 6px; top: 6px; bottom: 6px; padding: 0 12px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--sand); font-size: .85rem; cursor: pointer;
+}
+button.go {
+  width: 100%; margin-top: 18px; padding: 13px; font-size: 1rem; font-weight: 600; border: 0; border-radius: 12px;
+  background: var(--sand); color: var(--ink); cursor: pointer;
+}
+button.go:disabled { opacity: .55; cursor: default; }
+#msg { min-height: 1.4em; margin: 14px 0 0; font-size: .9rem; color: var(--error); }
+#msg.info { color: var(--foam); opacity: .8; }
+progress { width: 100%; height: 8px; margin-top: 14px; accent-color: var(--sand); display: none; }
+#stage { position: fixed; inset: 0; display: none; background: #000; }
+#canvas { display: block; width: 100%; height: 100%; }
+#canvas:focus { outline: none; }
+</style>
+</head>
+<body>
+<main id="gate">
+  <form class="card" id="form" autocomplete="off">
+    <h1>Mahujanu</h1>
+    <p class="sub">Enter the family password to play.</p>
+    <label for="pw">Password</label>
+    <div class="field">
+      <input id="pw" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required>
+      <button id="toggle" type="button" aria-label="Show password">Show</button>
+    </div>
+    <button class="go" id="go" type="submit">Enter</button>
+    <progress id="bar" max="1" value="0"></progress>
+    <p id="msg" role="status" aria-live="polite"></p>
+  </form>
+</main>
+<div id="stage"><canvas id="canvas">Your browser does not support the canvas tag.</canvas></div>
+
+<script>
+"use strict";
+// __CONFIG__ is replaced by the build script. It holds only public values: the manifest path and the
+// file sizes needed for the progress bar. Everything else, including file names, is encrypted.
+const CONFIG = {"manifest":"manifest-592587a8751f.bin"};
+
+const form = document.getElementById("form");
+const pw = document.getElementById("pw");
+const go = document.getElementById("go");
+const msg = document.getElementById("msg");
+const bar = document.getElementById("bar");
+const toggle = document.getElementById("toggle");
+
+toggle.addEventListener("click", () => {
+  const show = pw.type === "password";
+  pw.type = show ? "text" : "password";
+  toggle.textContent = show ? "Hide" : "Show";
+});
+
+function say(text, kind) {
+  msg.textContent = text;
+  msg.className = kind === "info" ? "info" : "";
+}
+
+class WrongPassword extends Error {}
+
+const enc = new TextEncoder();
+
+async function fetchBytes(path) {
+  const response = await fetch(path, { cache: "force-cache" });
+  if (!response.ok) {
+    throw new Error("Could not download part of the game (" + response.status + "). Try again.");
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function deriveKey(password, salt, iterations) {
+  const material = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"]
+  );
+}
+
+// Package layout: "MJ1" | iterations (u32 BE) | salt (16) for the manifest; every package then has
+// iv (12) | AES-GCM ciphertext (which ends with the 16-byte tag).
+async function decryptPackage(key, bytes, offset, aad) {
+  const iv = bytes.subarray(offset, offset + 12);
+  const body = bytes.subarray(offset + 12);
+  try {
+    return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: enc.encode(aad) }, key, body));
+  } catch (e) {
+    throw new WrongPassword();
+  }
+}
+
+async function gunzip(bytes) {
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error("This browser is too old. Please update it (Chrome, Safari 16.4 or later, or Firefox).");
+  }
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function unlock(password) {
+  say("Checking the password…", "info");
+  const head = await fetchBytes(CONFIG.manifest);
+  if (head.length < 7 + 4 + 16 + 12 + 16 || String.fromCharCode(head[0], head[1], head[2]) !== "MJ1") {
+    throw new Error("The game files are damaged.");
+  }
+  const iterations = new DataView(head.buffer, head.byteOffset + 3, 4).getUint32(0, false);
+  if (iterations < 100000 || iterations > 5000000) {
+    throw new Error("The game files are damaged.");
+  }
+  const salt = head.subarray(7, 23);
+  const key = await deriveKey(password, salt, iterations);
+  const manifestBytes = await decryptPackage(key, head, 23, "manifest");     // wrong password fails here
+  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
+
+  // Relay address and family key for online play, delivered only to someone who knew the password.
+  if (manifest.site && typeof manifest.site === "object") {
+    window.__mahujanu = { relay: String(manifest.site.relay || ""), key: String(manifest.site.key || "") };
+  }
+  const files = {};
+  let done = 0;
+  const total = manifest.files.reduce((n, f) => n + f.download, 0);
+  bar.style.display = "block";
+  bar.value = 0;
+  say("Unlocking…", "info");
+  for (const entry of manifest.files) {
+    const packed = await fetchBytes(entry.blob);
+    const raw = await gunzip(await decryptPackage(key, packed, 0, entry.name));
+    if (raw.length !== entry.size) {
+      throw new Error("The game files are damaged.");
+    }
+    files[entry.name] = { bytes: raw, type: entry.type };
+    done += entry.download;
+    bar.value = done / total;
+  }
+  return files;
+}
+
+// The engine fetches game.wasm and game.pck by name, and the audio worklets are added by name. Serve
+// all of them from the decrypted copies in memory; everything else goes to the network as normal.
+function installFileHooks(files) {
+  const urls = {};
+  const blobFor = (name) => {
+    if (!urls[name]) {
+      urls[name] = URL.createObjectURL(new Blob([files[name].bytes], { type: files[name].type }));
+    }
+    return urls[name];
+  };
+  const lookup = (input) => {
+    try {
+      const url = new URL(typeof input === "string" ? input : input.url, location.href);
+      if (url.origin !== location.origin) { return null; }
+      const name = url.pathname.split("/").pop();
+      return Object.prototype.hasOwnProperty.call(files, name) ? name : null;
+    } catch (e) {
+      return null;
+    }
+  };
+  const realFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const name = lookup(input);
+    if (name === null) { return realFetch(input, init); }
+    const f = files[name];
+    return Promise.resolve(new Response(f.bytes, {
+      status: 200,
+      headers: { "Content-Type": f.type, "Content-Length": String(f.bytes.length) },
+    }));
+  };
+  if (typeof Worklet !== "undefined" && Worklet.prototype.addModule) {
+    const realAdd = Worklet.prototype.addModule;
+    Worklet.prototype.addModule = function (moduleURL, options) {
+      const name = lookup(String(moduleURL));
+      return realAdd.call(this, name === null ? moduleURL : blobFor(name), options);
+    };
+  }
+  return blobFor;
+}
+
+function loadScript(url) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Could not start the game engine."));
+    s.src = url;
+    document.head.appendChild(s);
+  });
+}
+
+async function launch(files) {
+  const blobFor = installFileHooks(files);
+  await loadScript(blobFor("game.js"));
+  const config = {
+    args: [],
+    canvasResizePolicy: 2,
+    ensureCrossOriginIsolationHeaders: false,
+    executable: "game",
+    experimentalVK: false,
+    fileSizes: { "game.pck": files["game.pck"].bytes.length, "game.wasm": files["game.wasm"].bytes.length },
+    focusCanvas: true,
+    gdextensionLibs: [],
+  };
+  const missing = Engine.getMissingFeatures({ threads: false });
+  if (missing.length) {
+    throw new Error("This browser cannot run the game. Missing: " + missing.join(", "));
+  }
+  document.getElementById("gate").remove();
+  document.getElementById("stage").style.display = "block";
+  document.title = "Mahujanu";
+  await new Engine(config).startGame({ canvas: document.getElementById("canvas") });
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (go.disabled) { return; }
+  go.disabled = true;
+  pw.disabled = true;
+  try {
+    const files = await unlock(pw.value);
+    pw.value = "";
+    say("Starting…", "info");
+    await launch(files);
+  } catch (error) {
+    bar.style.display = "none";
+    go.disabled = false;
+    pw.disabled = false;
+    if (error instanceof WrongPassword) {
+      say("That password did not work.");
+      pw.select();
+    } else {
+      say(error && error.message ? error.message : "Something went wrong.");
+    }
+    if (document.getElementById("stage").style.display === "block") {
+      document.body.innerHTML = "<p style='padding:24px'>" + (error && error.message ? error.message.replace(/</g, "&lt;") : "Something went wrong.") + "</p>";
+    }
+  }
+});
+
+pw.focus();
+</script>
+</body>
+</html>
