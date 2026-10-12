@@ -79,7 +79,7 @@ progress { width: 100%; height: 8px; margin-top: 14px; accent-color: var(--sand)
 "use strict";
 // __CONFIG__ is replaced by the build script. It holds only public values: the manifest path and the
 // file sizes needed for the progress bar. Everything else, including file names, is encrypted.
-const CONFIG = {"manifest":"manifest-66db2a3c1ffa.bin"};
+const CONFIG = {"manifest":"manifest-2dbb28d61d57.bin"};
 
 const form = document.getElementById("form");
 const pw = document.getElementById("pw");
@@ -230,7 +230,42 @@ function loadScript(url) {
   });
 }
 
+// Phones such as iPhones have a pixel ratio of 3, which makes the game's drawing surface about 2.25 times
+// larger than at a ratio of 2 (3.6 million pixels against 1.6 million) for very little visible gain.
+// iPhones are strict about memory, and when a page uses too much the browser takes the drawing surface
+// away ("WebGL context lost"). The ratio is therefore capped. Change MAX_PIXEL_RATIO to tune it, or try a
+// value for one visit by adding ?pixelratio=1.5 to the address.
+const MAX_PIXEL_RATIO = 2;
+
+function limitPixelRatio() {
+  const asked = parseFloat(new URLSearchParams(location.search).get("pixelratio"));
+  const cap = asked > 0 ? asked : MAX_PIXEL_RATIO;
+  const real = window.devicePixelRatio || 1;
+  if (real <= cap) { return real; }
+  try {
+    Object.defineProperty(window, "devicePixelRatio", { configurable: true, get: () => cap });
+  } catch (e) { /* the browser does not allow it: the game simply runs at the full ratio */ }
+  return Math.min(real, cap);
+}
+
+// If the browser still takes the drawing surface away, say what happened instead of leaving a black screen.
+function watchForLostContext(canvas) {
+  canvas.addEventListener("webglcontextlost", () => {
+    const box = document.createElement("div");
+    box.style.cssText = "position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;background:#0b3d4a;color:#eef7f6;text-align:center;font:16px system-ui,sans-serif;z-index:10";
+    const text = document.createElement("p");
+    text.textContent = "The phone ran out of graphics memory and stopped the game. Close other tabs and apps, then reload.";
+    const button = document.createElement("button");
+    button.textContent = "Reload";
+    button.style.cssText = "padding:12px 28px;border:0;border-radius:12px;background:#f2d8a7;color:#0a2a33;font-size:1rem;font-weight:600";
+    button.addEventListener("click", () => location.reload());
+    box.append(text, button);
+    document.body.appendChild(box);
+  });
+}
+
 async function launch(files) {
+  limitPixelRatio();
   const blobFor = installFileHooks(files);
   await loadScript(blobFor("game.js"));
   const config = {
@@ -250,7 +285,19 @@ async function launch(files) {
   document.getElementById("gate").remove();
   document.getElementById("stage").style.display = "block";
   document.title = "Mahujanu";
+  watchForLostContext(document.getElementById("canvas"));
   await new Engine(config).startGame({ canvas: document.getElementById("canvas") });
+  releaseMemory(files);
+}
+
+// The engine has taken its own copy of the game files by now; the decrypted copies kept here (about
+// 40 MB) are no longer needed, so they are let go. This matters on phones.
+function releaseMemory(files) {
+  for (const name of Object.keys(files)) {
+    if (name !== "game.audio.worklet.js" && name !== "game.audio.position.worklet.js") {
+      files[name].bytes = new Uint8Array(0);
+    }
+  }
 }
 
 form.addEventListener("submit", async (event) => {
